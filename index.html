@@ -78,18 +78,50 @@
         let isLetterOpen = false;
         let envelopeRect = {};
         
-        // --- State Baru untuk Efek Hati ---
         let heartParticles = [];
 
         // --- Inisialisasi Musik dengan Tone.js ---
-        const synth = new Tone.Synth().toDestination();
+        const reverb = new Tone.Reverb(0.5).toDestination();
+        const synth = new Tone.FMSynth({
+            harmonicity: 3,
+            modulationIndex: 10,
+            envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 1 },
+        }).connect(reverb);
+
+        // ✅ REVISI: Melodi lagu diperbarui sesuai permintaan
         const melody = [
-            { time: "0:0", note: "C4", duration: "8n" }, { time: "0:0:2", note: "C4", duration: "8n" }, { time: "0:1", note: "D4", duration: "4n" }, { time: "0:2", note: "C4", duration: "4n" }, { time: "0:3", note: "F4", duration: "4n" }, { time: "0:4", note: "E4", duration: "2n" },
-            { time: "1:0", note: "C4", duration: "8n" }, { time: "1:0:2", note: "C4", duration: "8n" }, { time: "1:1", note: "D4", duration: "4n" }, { time: "1:2", note: "C4", duration: "4n" }, { time: "1:3", note: "G4", duration: "4n" }, { time: "1:4", note: "F4", duration: "2n" },
+            { time: "0:0", note: "C4", duration: "8n" },
+            { time: "0:1", note: "C4", duration: "8n" },
+            { time: "0:2", note: "D4", duration: "4n" },
+            { time: "0:3", note: "C4", duration: "4n" },
+            { time: "1:0", note: "F4", duration: "4n" },
+            { time: "1:1", note: "E4", duration: "2n" },
+
+            { time: "2:0", note: "C4", duration: "8n" },
+            { time: "2:1", note: "C4", duration: "8n" },
+            { time: "2:2", note: "D4", duration: "4n" },
+            { time: "2:3", note: "C4", duration: "4n" },
+            { time: "3:0", note: "G4", duration: "4n" },
+            { time: "3:1", note: "F4", duration: "2n" },
+
+            { time: "4:0", note: "C4", duration: "8n" },
+            { time: "4:1", note: "C4", duration: "8n" },
+            { time: "4:2", note: "C5", duration: "4n" },
+            { time: "4:3", note: "A4", duration: "4n" },
+            { time: "5:0", note: "F4", duration: "4n" },
+            { time: "5:1", note: "E4", duration: "4n" },
+            { time: "5:2", note: "D4", duration: "4n" },
+
+            { time: "6:0", note: "Bb4", duration: "8n" },
+            { time: "6:1", note: "Bb4", duration: "8n" },
+            { time: "6:2", note: "A4", duration: "4n" },
+            { time: "6:3", note: "F4", duration: "4n" },
+            { time: "7:0", note: "G4", duration: "4n" },
+            { time: "7:1", note: "F4", duration: "2n" }
         ];
         const part = new Tone.Part((time, value) => synth.triggerAttackRelease(value.note, value.duration, time), melody).start(0);
         part.loop = true;
-        part.loopEnd = "2m";
+        part.loopEnd = "8m"; // Loop setelah 8 bar
 
         // --- Inisialisasi Model AI ---
         const createFaceLandmarker = async () => {
@@ -241,14 +273,12 @@
             ctx.strokeRect(x, y, width, height);
             ctx.fillRect(x, y, width, height);
             
-            // ✅ REVISI: Panggil fungsi untuk menggambar hati
             drawHearts(x, y, width, height);
 
             ctx.save();
             ctx.scale(-1, 1);
 
             ctx.fillStyle = "#C71585";
-            // ✅ REVISI: Menggunakan font yang lebih menarik
             ctx.font = "bold 40px 'Brush Script MT', cursive";
             ctx.textAlign = "center";
             ctx.fillText("Selamat Ulang Tahun!", -canvas.width / 2, y + 80);
@@ -258,7 +288,6 @@
             const message = "Semoga panjang umur, sehat selalu, dan semua harapanmu tercapai. Teruslah menjadi pribadi yang luar biasa!";
             const lines = [];
             let currentLine = '';
-            // ✅ REVISI: Penyesuaian lebar teks agar pas
             const maxWidth = width - 80; 
             message.split(' ').forEach(word => {
                 if (ctx.measureText(currentLine + word).width > maxWidth) {
@@ -271,14 +300,12 @@
             lines.push(currentLine);
 
             lines.forEach((line, index) => {
-                // ✅ REVISI: Penyesuaian posisi teks agar lebih di tengah
                 ctx.fillText(line.trim(), -canvas.width / 2, y + 160 + (index * 35));
             });
 
             ctx.restore();
         }
 
-        // --- Fungsi Baru untuk Efek Hati ---
         function drawHearts(letterX, letterY, letterWidth, letterHeight) {
             if (heartParticles.length < 30) {
                 heartParticles.push({
@@ -298,7 +325,7 @@
                 if (p.alpha <= 0 || p.y > letterY + letterHeight) {
                     heartParticles.splice(i, 1);
                 } else {
-                    ctx.fillStyle = `rgba(255, 105, 180, ${p.alpha})`; // Warna pink
+                    ctx.fillStyle = `rgba(255, 105, 180, ${p.alpha})`;
                     ctx.beginPath();
                     ctx.moveTo(p.x, p.y + p.size / 4);
                     ctx.bezierCurveTo(p.x, p.y, p.x - p.size / 2, p.y, p.x - p.size / 2, p.y + p.size / 4);
@@ -347,7 +374,7 @@
                 isLetterOpen = false;
                 isFlameOn = true;
                 flameParticles = [];
-                heartParticles = []; // Hapus sisa hati saat surat ditutup
+                heartParticles = [];
                 statusText.textContent = "Tiup lagi untuk memadamkannya!";
                 return;
             }
