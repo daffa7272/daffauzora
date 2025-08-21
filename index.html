@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tiup Lilin Kue Ulang Tahun AI</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tone.js for audio synthesis -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <!-- MediaPipe Vision Bundle -->
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js"></script>
+    <style>
+        .container-stack {
+            position: relative;
+            width: 100%;
+            max-width: 640px; /* Ukuran yang lebih sesuai untuk potret */
+            margin: auto;
+        }
+        .container-stack > * {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); /* Efek cermin */
+        }
+        #webcam {
+            opacity: 0.5; /* Tampilkan video di belakang lilin */
+        }
+        #candle_canvas {
+            z-index: 10;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4 font-sans">
+
+    <h1 class="text-4xl font-bold mb-2 text-center">Tiup Lilin Kue Ulang Tahun!</h1>
+    <p id="status" class="mb-4 text-center text-gray-300">Arahkan wajah ke kamera dan tiup lilinnya.</p>
+
+    <!-- Kontainer untuk Video dan Canvas -->
+    <div id="container" class="container-stack bg-gray-800 rounded-lg shadow-lg overflow-hidden aspect-[9/16]">
+        <video id="webcam" muted autoplay playsinline></video>
+        <canvas id="candle_canvas"></canvas>
+    </div>
+
+    <!-- Tombol Kontrol -->
+    <div class="flex space-x-4 mt-4">
+        <button id="enableCam" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-lg font-semibold transition-all shadow-md">
+            Mulai Kamera
+        </button>
+        <button id="muteBtn" class="hidden px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg text-lg font-semibold transition-all shadow-md">
+            Hening
+        </button>
+    </div>
+
+    <script type="module">
+        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js";
+
+        const video = document.getElementById("webcam");
+        const canvas = document.getElementById("candle_canvas");
+        const ctx = canvas.getContext("2d");
+        const enableCamButton = document.getElementById("enableCam");
+        const muteButton = document.getElementById("muteBtn");
+        const statusText = document.getElementById("status");
+
+        const BLOW_THRESHOLD = 0.5;
+        const BLOW_DURATION = 2000;
+
+        let faceLandmarker, isFlameOn = true, isAudioSetup = false;
+        let flameParticles = [], smokeParticles = [];
+        
+        let isBlowing = false;
+        let extinguishTimeout = null;
+
+        let isEnvelopeVisible = false;
+        let isLetterOpen = false;
+        let envelopeRect = {};
+        
+        // --- State Baru untuk Efek Hati ---
+        let heartParticles = [];
+
+        // --- Inisialisasi Musik dengan Tone.js ---
+        const synth = new Tone.Synth().toDestination();
+        const melody = [
+            { time: "0:0", note: "C4", duration: "8n" }, { time: "0:0:2", note: "C4", duration: "8n" }, { time: "0:1", note: "D4", duration: "4n" }, { time: "0:2", note: "C4", duration: "4n" }, { time: "0:3", note: "F4", duration: "4n" }, { time: "0:4", note: "E4", duration: "2n" },
+            { time: "1:0", note: "C4", duration: "8n" }, { time: "1:0:2", note: "C4", duration: "8n" }, { time: "1:1", note: "D4", duration: "4n" }, { time: "1:2", note: "C4", duration: "4n" }, { time: "1:3", note: "G4", duration: "4n" }, { time: "1:4", note: "F4", duration: "2n" },
+        ];
+        const part = new Tone.Part((time, value) => synth.triggerAttackRelease(value.note, value.duration, time), melody).start(0);
+        part.loop = true;
+        part.loopEnd = "2m";
+
+        // --- Inisialisasi Model AI ---
+        const createFaceLandmarker = async () => {
+            const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
+            faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, delegate: "GPU" },
+                outputFaceBlendshapes: true, runningMode: "VIDEO", numFaces: 1
+            });
+            enableCamButton.textContent = "Mulai Kamera";
+            enableCamButton.disabled = false;
+        };
+        createFaceLandmarker();
+
+        // --- Logika Kamera & Audio ---
+        enableCamButton.addEventListener("click", async () => {
+            if (!faceLandmarker) return;
+            if (!isAudioSetup) {
+                await Tone.start();
+                Tone.Transport.start();
+                isAudioSetup = true;
+            }
+            enableCamButton.classList.add("hidden");
+            muteButton.classList.remove("hidden");
+            statusText.textContent = "Kamera aktif! Tiup lilinnya.";
+            navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", predictWebcam);
+            });
+        });
+        
+        muteButton.addEventListener("click", () => {
+            Tone.Destination.mute = !Tone.Destination.mute;
+            muteButton.textContent = Tone.Destination.mute ? "Bunyikan" : "Hening";
+        });
+
+        // --- Logika Deteksi & Animasi ---
+        let lastVideoTime = -1;
+        async function predictWebcam() {
+            if (video.readyState < 2) {
+                window.requestAnimationFrame(predictWebcam);
+                return;
+            }
+            const startTimeMs = performance.now();
+            if (lastVideoTime !== video.currentTime) {
+                lastVideoTime = video.currentTime;
+                const results = faceLandmarker.detectForVideo(video, startTimeMs);
+                
+                if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+                    const pucker = results.faceBlendshapes[0].categories.find(s => s.categoryName === 'mouthPucker')?.score || 0;
+                    const isCurrentlyPuckering = pucker > BLOW_THRESHOLD;
+
+                    if (isCurrentlyPuckering && isFlameOn) {
+                        if (!isBlowing) {
+                            isBlowing = true;
+                            statusText.textContent = "Terus tiup...";
+                            extinguishTimeout = setTimeout(() => {
+                                if (isBlowing) {
+                                    isFlameOn = false;
+                                    createSmoke();
+                                    isEnvelopeVisible = true;
+                                    statusText.textContent = "Ada surat untukmu! Klik amplopnya.";
+                                }
+                                isBlowing = false;
+                                extinguishTimeout = null;
+                            }, BLOW_DURATION);
+                        }
+                    } else {
+                        if (isBlowing) {
+                            isBlowing = false;
+                            statusText.textContent = "Tiupan berhenti, coba lagi!";
+                            clearTimeout(extinguishTimeout);
+                            extinguishTimeout = null;
+                        }
+                    }
+                } else {
+                     isBlowing = false;
+                }
+            }
+            
+            drawElements();
+            window.requestAnimationFrame(predictWebcam);
+        }
+
+        // --- Logika Menggambar ---
+        function drawElements() {
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawCakeAndCandle();
+
+            if (isEnvelopeVisible) {
+                drawEnvelope();
+            }
+
+            if (isLetterOpen) {
+                drawLetter();
+            }
+        }
+
+        function drawCakeAndCandle() {
+            const cakeWidth = 200, cakeHeight = 100, cakeX = canvas.width / 2 - cakeWidth / 2, cakeY = canvas.height - cakeHeight - 40;
+            ctx.fillStyle = "#D2B48C"; ctx.fillRect(cakeX, cakeY, cakeWidth, cakeHeight);
+            ctx.fillStyle = "#FFF8DC"; ctx.fillRect(cakeX, cakeY, cakeWidth, 20);
+            ctx.fillStyle = "#FF69B4";
+            for(let i=0; i<5; i++) { ctx.beginPath(); ctx.arc(cakeX + 25 + i * 40, cakeY + 45, 8, 0, Math.PI * 2); ctx.fill(); }
+            const candleWidth = 15, candleHeight = 50, candleX = canvas.width / 2 - candleWidth / 2, candleY = cakeY - candleHeight;
+            ctx.fillStyle = "#F0EAD6"; ctx.fillRect(candleX, candleY, candleWidth, candleHeight);
+            ctx.fillStyle = "#333"; ctx.fillRect(canvas.width / 2 - 2, candleY - 10, 4, 10); 
+            if (isFlameOn) {
+                updateAndDrawFlame(canvas.width / 2, candleY - 10);
+            } else if (!isEnvelopeVisible && !isLetterOpen) {
+                updateAndDrawSmoke();
+            }
+        }
+
+        function drawEnvelope() {
+            const width = 200;
+            const height = 120;
+            const x = canvas.width / 2 - width / 2;
+            const y = canvas.height / 2 - height / 2;
+            envelopeRect = { x, y, width, height };
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = "#FFC0CB";
+            ctx.fillRect(x, y, width, height);
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + width / 2, y + height / 2);
+            ctx.lineTo(x + width, y);
+            ctx.strokeStyle = "#FF69B4";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function drawLetter() {
+            const width = 320;
+            const height = 450;
+            const x = canvas.width / 2 - width / 2;
+            const y = canvas.height / 2 - height / 2;
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "#FFFACD";
+            ctx.strokeStyle = "#FFD700";
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, width, height);
+            ctx.fillRect(x, y, width, height);
+            
+            // ✅ REVISI: Panggil fungsi untuk menggambar hati
+            drawHearts(x, y, width, height);
+
+            ctx.save();
+            ctx.scale(-1, 1);
+
+            ctx.fillStyle = "#C71585";
+            // ✅ REVISI: Menggunakan font yang lebih menarik
+            ctx.font = "bold 40px 'Brush Script MT', cursive";
+            ctx.textAlign = "center";
+            ctx.fillText("Selamat Ulang Tahun!", -canvas.width / 2, y + 80);
+
+            ctx.fillStyle = "#2F4F4F";
+            ctx.font = "24px 'Brush Script MT', cursive";
+            const message = "Semoga panjang umur, sehat selalu, dan semua harapanmu tercapai. Teruslah menjadi pribadi yang luar biasa!";
+            const lines = [];
+            let currentLine = '';
+            // ✅ REVISI: Penyesuaian lebar teks agar pas
+            const maxWidth = width - 80; 
+            message.split(' ').forEach(word => {
+                if (ctx.measureText(currentLine + word).width > maxWidth) {
+                    lines.push(currentLine);
+                    currentLine = word + ' ';
+                } else {
+                    currentLine += word + ' ';
+                }
+            });
+            lines.push(currentLine);
+
+            lines.forEach((line, index) => {
+                // ✅ REVISI: Penyesuaian posisi teks agar lebih di tengah
+                ctx.fillText(line.trim(), -canvas.width / 2, y + 160 + (index * 35));
+            });
+
+            ctx.restore();
+        }
+
+        // --- Fungsi Baru untuk Efek Hati ---
+        function drawHearts(letterX, letterY, letterWidth, letterHeight) {
+            if (heartParticles.length < 30) {
+                heartParticles.push({
+                    x: letterX + Math.random() * letterWidth,
+                    y: letterY,
+                    size: Math.random() * 10 + 5,
+                    speed: Math.random() * 1 + 0.5,
+                    alpha: 1
+                });
+            }
+
+            for (let i = heartParticles.length - 1; i >= 0; i--) {
+                let p = heartParticles[i];
+                p.y += p.speed;
+                p.alpha -= 0.01;
+
+                if (p.alpha <= 0 || p.y > letterY + letterHeight) {
+                    heartParticles.splice(i, 1);
+                } else {
+                    ctx.fillStyle = `rgba(255, 105, 180, ${p.alpha})`; // Warna pink
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y + p.size / 4);
+                    ctx.bezierCurveTo(p.x, p.y, p.x - p.size / 2, p.y, p.x - p.size / 2, p.y + p.size / 4);
+                    ctx.bezierCurveTo(p.x - p.size / 2, p.y + p.size / 2, p.x, p.y + p.size, p.x, p.y + p.size);
+                    ctx.bezierCurveTo(p.x, p.y + p.size, p.x + p.size / 2, p.y + p.size / 2, p.x + p.size / 2, p.y + p.size / 4);
+                    ctx.bezierCurveTo(p.x + p.size / 2, p.y, p.x, p.y, p.x, p.y + p.size / 4);
+                    ctx.fill();
+                }
+            }
+        }
+
+        function updateAndDrawFlame(x, y) {
+            const windStrength = isBlowing ? 2.0 : 0;
+            const flickerIntensity = isBlowing ? 1.5 : 1;
+            if (flameParticles.length < 100) {
+                for (let i = 0; i < 5; i++) {
+                    flameParticles.push({ x, y, vx: ((Math.random() - 0.5) * 0.5 * flickerIntensity) + windStrength, vy: -Math.random() * 1.5 * flickerIntensity - 1, size: (Math.random() * 15 + 10) / (isBlowing ? 1.5 : 1), alpha: 1 });
+                }
+            }
+            for (let i = flameParticles.length - 1; i >= 0; i--) {
+                let p = flameParticles[i]; p.x += p.vx; p.y += p.vy; p.size *= 0.95; p.alpha -= 0.04;
+                if (p.alpha <= 0) flameParticles.splice(i, 1);
+                else { ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fillStyle = `rgba(255, ${Math.random() * 150 + 50}, 0, ${p.alpha})`; ctx.fill(); }
+            }
+        }
+        
+        function createSmoke() {
+            smokeParticles = []; const x = canvas.width / 2, y = canvas.height - 100 - 40 - 50 - 10;
+            for (let i = 0; i < 30; i++) smokeParticles.push({ x, y, vx: (Math.random() - 0.5) * 0.3, vy: -Math.random() * 1 - 0.5, size: Math.random() * 10 + 5, alpha: 0.5 });
+        }
+
+        function updateAndDrawSmoke() {
+             for (let i = smokeParticles.length - 1; i >= 0; i--) {
+                let p = smokeParticles[i]; p.x += p.vx; p.y += p.vy; p.alpha -= 0.01;
+                if (p.alpha <= 0) smokeParticles.splice(i, 1);
+                else { ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fillStyle = `rgba(150, 150, 150, ${p.alpha})`; ctx.fill(); }
+            }
+        }
+        
+        canvas.addEventListener("click", (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = canvas.width - (event.clientX - rect.left);
+            const clickY = event.clientY - rect.top;
+
+            if (isLetterOpen) {
+                isLetterOpen = false;
+                isFlameOn = true;
+                flameParticles = [];
+                heartParticles = []; // Hapus sisa hati saat surat ditutup
+                statusText.textContent = "Tiup lagi untuk memadamkannya!";
+                return;
+            }
+
+            if (isEnvelopeVisible) {
+                if (clickX > envelopeRect.x && clickX < envelopeRect.x + envelopeRect.width &&
+                    clickY > envelopeRect.y && clickY < envelopeRect.y + envelopeRect.height) {
+                    isEnvelopeVisible = false;
+                    isLetterOpen = true;
+                    statusText.textContent = "Selamat Ulang Tahun! Klik di mana saja untuk menutup.";
+                }
+            }
+        });
+    </script>
+</body>
+</html>
