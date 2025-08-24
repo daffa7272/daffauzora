@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tiup Lilin Kue Ulang Tahun AI</title>
+    <title>Tiup Lilin & Potong Kue AI - Edisi Meriah</title>
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Tone.js for audio synthesis -->
@@ -11,10 +11,20 @@
     <!-- MediaPipe Vision Bundle -->
     <script type="module" src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js"></script>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Pacifico&display=swap');
+        html, body {
+            height: 100%;
+            overflow: hidden; /* Mencegah scroll di mobile */
+        }
+        body {
+            background: linear-gradient(180deg, #FFC0CB, #FFB6C1, #FF69B4);
+        }
         .container-stack {
             position: relative;
             width: 100%;
-            max-width: 640px; /* Ukuran yang lebih sesuai untuk potret */
+            height: 100%;
+            max-width: 640px; 
+            max-height: 960px;
             margin: auto;
         }
         .container-stack > * {
@@ -26,86 +36,118 @@
             transform: scaleX(-1); /* Efek cermin */
         }
         #webcam {
-            opacity: 0.5; /* Tampilkan video di belakang lilin */
+            opacity: 1; 
+            object-fit: cover; /* Pastikan video mengisi kontainer */
         }
         #candle_canvas {
             z-index: 10;
             cursor: pointer;
+            background: transparent;
+        }
+        #background_canvas {
+            z-index: -1;
+        }
+        .fancy-font {
+            font-family: 'Pacifico', cursive;
+        }
+        .script-font {
+            font-family: 'Dancing Script', cursive;
         }
     </style>
 </head>
-<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4 font-sans">
+<body class="text-white flex flex-col items-center justify-center p-4 font-sans">
 
-    <h1 class="text-4xl font-bold mb-2 text-center">Tiup Lilin Kue Ulang Tahun!</h1>
-    <p id="status" class="mb-4 text-center text-gray-300">Arahkan wajah ke kamera dan tiup lilinnya.</p>
+    <div id="main-content" class="flex flex-col items-center justify-center w-full h-full">
+        <h1 class="text-5xl md:text-6xl font-bold mb-2 text-center fancy-font text-pink-900 drop-shadow-lg">Make a Wish!</h1>
+        <p id="status" class="mb-4 text-center text-pink-100 text-lg">Arahkan wajah ke kamera dan tiup lilinnya.</p>
 
-    <!-- Kontainer untuk Video dan Canvas -->
-    <div id="container" class="container-stack bg-gray-800 rounded-lg shadow-lg overflow-hidden aspect-[9/16]">
-        <video id="webcam" muted autoplay playsinline></video>
-        <canvas id="candle_canvas"></canvas>
-    </div>
+        <!-- Kontainer untuk Video dan Canvas -->
+        <div id="container" class="container-stack rounded-lg shadow-2xl overflow-hidden w-full aspect-[9/16]">
+            <canvas id="background_canvas" style="transform: none;"></canvas>
+            <video id="webcam" muted autoplay playsinline></video>
+            <canvas id="candle_canvas"></canvas>
+        </div>
 
-    <!-- Tombol Kontrol -->
-    <div class="flex space-x-4 mt-4">
-        <button id="enableCam" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-lg font-semibold transition-all shadow-md">
-            Mulai Kamera
-        </button>
-        <button id="muteBtn" class="hidden px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg text-lg font-semibold transition-all shadow-md">
-            Hening
-        </button>
+        <!-- Tombol Kontrol -->
+        <div class="flex space-x-4 mt-4">
+            <button id="enableCam" class="px-6 py-3 bg-pink-500 hover:bg-pink-600 rounded-full text-lg font-semibold transition-all shadow-xl text-white transform hover:scale-105">
+                Mulai Kamera
+            </button>
+            <button id="muteBtn" class="hidden px-6 py-3 bg-purple-500 hover:bg-purple-600 rounded-full text-lg font-semibold transition-all shadow-xl text-white">
+                Hening
+            </button>
+        </div>
     </div>
 
     <script type="module">
-        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js";
+        import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js";
 
         const video = document.getElementById("webcam");
         const canvas = document.getElementById("candle_canvas");
         const ctx = canvas.getContext("2d");
+        const bgCanvas = document.getElementById("background_canvas");
+        const bgCtx = bgCanvas.getContext("2d");
+        
         const enableCamButton = document.getElementById("enableCam");
         const muteButton = document.getElementById("muteBtn");
         const statusText = document.getElementById("status");
 
         const BLOW_THRESHOLD = 0.5;
-        const BLOW_DURATION = 2000;
+        const BLOW_DURATION = 1500;
 
-        let faceLandmarker, isFlameOn = true, isAudioSetup = false;
-        let flameParticles = [], smokeParticles = [];
+        let faceLandmarker, handLandmarker, isFlameOn = true, isAudioSetup = false;
+        let flameParticles = [], confettiParticles = [], sparkleParticles = [];
         
         let isBlowing = false;
         let extinguishTimeout = null;
-
-        let isEnvelopeVisible = false;
-        let isLetterOpen = false;
+        let isEnvelopeVisible = false, isLetterOpen = false;
         let envelopeRect = {};
+
+        // Variabel untuk fitur potong kue
+        let isCakeCuttable = false;
+        let slicePath = [];
+        let finalSlicePath = [];
+        let isCakeCut = false;
+        let sliceAnimationOffset = 0;
+        let fingerPosition = null;
         
-        // --- State Baru untuk Efek Hati ---
-        let heartParticles = [];
 
         // --- Inisialisasi Musik dengan Tone.js ---
-        const synth = new Tone.Synth().toDestination();
+        const reverb = new Tone.Reverb(0.5).toDestination();
+        const synth = new Tone.PolySynth(Tone.FMSynth, {
+            volume: 10,
+            harmonicity: 3,
+            modulationIndex: 10,
+            envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 1 },
+        }).connect(reverb);
         const melody = [
-            { time: "0:0", note: "C4", duration: "8n" }, { time: "0:0:2", note: "C4", duration: "8n" }, { time: "0:1", note: "D4", duration: "4n" }, { time: "0:2", note: "C4", duration: "4n" }, { time: "0:3", note: "F4", duration: "4n" }, { time: "0:4", note: "E4", duration: "2n" },
-            { time: "1:0", note: "C4", duration: "8n" }, { time: "1:0:2", note: "C4", duration: "8n" }, { time: "1:1", note: "D4", duration: "4n" }, { time: "1:2", note: "C4", duration: "4n" }, { time: "1:3", note: "G4", duration: "4n" }, { time: "1:4", note: "F4", duration: "2n" },
+            { time: "0:0", note: "C4", duration: "8n" }, { time: "0:1", note: "C4", duration: "8n" }, { time: "0:2", note: "D4", duration: "4n" }, { time: "0:3", note: "C4", duration: "4n" }, { time: "1:0", note: "F4", duration: "4n" }, { time: "1:1", note: "E4", duration: "2n" },
+            { time: "2:0", note: "C4", duration: "8n" }, { time: "2:1", note: "C4", duration: "8n" }, { time: "2:2", note: "D4", duration: "4n" }, { time: "2:3", note: "C4", duration: "4n" }, { time: "3:0", note: "G4", duration: "4n" }, { time: "3:1", note: "F4", duration: "2n" },
+            { time: "4:0", note: "C4", duration: "8n" }, { time: "4:1", note: "C4", duration: "8n" }, { time: "4:2", note: "C5", duration: "4n" }, { time: "4:3", note: "A4", duration: "4n" }, { time: "5:0", note: "F4", duration: "4n" }, { time: "5:1", note: "E4", duration: "4n" }, { time: "5:2", note: "D4", duration: "4n" },
+            { time: "6:0", note: "Bb4", duration: "8n" }, { time: "6:1", note: "Bb4", duration: "8n" }, { time: "6:2", note: "A4", duration: "4n" }, { time: "6:3", note: "F4", duration: "4n" }, { time: "7:0", note: "G4", duration: "4n" }, { time: "7:1", note: "F4", duration: "2n" }
         ];
         const part = new Tone.Part((time, value) => synth.triggerAttackRelease(value.note, value.duration, time), melody).start(0);
         part.loop = true;
-        part.loopEnd = "2m";
+        part.loopEnd = "8m";
 
         // --- Inisialisasi Model AI ---
-        const createFaceLandmarker = async () => {
+        const createLandmarkers = async () => {
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
             faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
                 baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, delegate: "GPU" },
                 outputFaceBlendshapes: true, runningMode: "VIDEO", numFaces: 1
             });
-            enableCamButton.textContent = "Mulai Kamera";
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`, delegate: "GPU" },
+                runningMode: "VIDEO", numHands: 1
+            });
             enableCamButton.disabled = false;
         };
-        createFaceLandmarker();
+        createLandmarkers();
 
         // --- Logika Kamera & Audio ---
         enableCamButton.addEventListener("click", async () => {
-            if (!faceLandmarker) return;
+            if (!faceLandmarker || !handLandmarker) return;
             if (!isAudioSetup) {
                 await Tone.start();
                 Tone.Transport.start();
@@ -114,7 +156,7 @@
             enableCamButton.classList.add("hidden");
             muteButton.classList.remove("hidden");
             statusText.textContent = "Kamera aktif! Tiup lilinnya.";
-            navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }).then(stream => {
                 video.srcObject = stream;
                 video.addEventListener("loadeddata", predictWebcam);
             });
@@ -125,7 +167,7 @@
             muteButton.textContent = Tone.Destination.mute ? "Bunyikan" : "Hening";
         });
 
-        // --- Logika Deteksi & Animasi ---
+        // --- Logika Deteksi ---
         let lastVideoTime = -1;
         async function predictWebcam() {
             if (video.readyState < 2) {
@@ -135,10 +177,11 @@
             const startTimeMs = performance.now();
             if (lastVideoTime !== video.currentTime) {
                 lastVideoTime = video.currentTime;
-                const results = faceLandmarker.detectForVideo(video, startTimeMs);
+                const faceResults = faceLandmarker.detectForVideo(video, startTimeMs);
+                const handResults = handLandmarker.detectForVideo(video, startTimeMs);
                 
-                if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-                    const pucker = results.faceBlendshapes[0].categories.find(s => s.categoryName === 'mouthPucker')?.score || 0;
+                if (faceResults.faceBlendshapes && faceResults.faceBlendshapes.length > 0) {
+                    const pucker = faceResults.faceBlendshapes[0].categories.find(s => s.categoryName === 'mouthPucker')?.score || 0;
                     const isCurrentlyPuckering = pucker > BLOW_THRESHOLD;
 
                     if (isCurrentlyPuckering && isFlameOn) {
@@ -148,7 +191,7 @@
                             extinguishTimeout = setTimeout(() => {
                                 if (isBlowing) {
                                     isFlameOn = false;
-                                    createSmoke();
+                                    createConfetti(canvas.width / 2, canvas.height * 0.7);
                                     isEnvelopeVisible = true;
                                     statusText.textContent = "Ada surat untukmu! Klik amplopnya.";
                                 }
@@ -165,103 +208,254 @@
                         }
                     }
                 } else {
-                     isBlowing = false;
+                    isBlowing = false;
+                }
+
+                if (isCakeCuttable && handResults.landmarks && handResults.landmarks.length > 0) {
+                    const landmarks = handResults.landmarks[0];
+                    const indexFingerTip = landmarks[8];
+                    
+                    // ✅ REVISI: Kalkulasi X diperbaiki untuk gerakan yang benar
+                    const fingerX = indexFingerTip.x * canvas.width;
+                    const fingerY = indexFingerTip.y * canvas.height;
+                    
+                    fingerPosition = { x: fingerX, y: fingerY };
+
+                    if (slicePath.length === 0 || (Math.abs(fingerX - slicePath[slicePath.length-1].x) > 3 || Math.abs(fingerY - slicePath[slicePath.length-1].y) > 3)) {
+                        slicePath.push({ x: fingerX, y: fingerY });
+                    }
+                } else {
+                    fingerPosition = null;
+                    if (isCakeCuttable && slicePath.length > 1) {
+                        const cakeRect = getCakeRect();
+                        const startPoint = slicePath[0];
+                        const endPoint = slicePath[slicePath.length - 1];
+
+                        if (startPoint.y < cakeRect.y && endPoint.y > cakeRect.y + cakeRect.height / 2) {
+                            isCakeCut = true;
+                            finalSlicePath = [...slicePath];
+                            isCakeCuttable = false;
+                            slicePath = [];
+                            statusText.textContent = "Selamat menikmati kuenya! Klik untuk mengulang.";
+                        } else {
+                            slicePath = []; 
+                        }
+                    }
                 }
             }
             
             drawElements();
             window.requestAnimationFrame(predictWebcam);
         }
+        
+        function resizeCanvases() {
+            const container = document.getElementById('container');
+            const { width, height } = container.getBoundingClientRect();
+            canvas.width = bgCanvas.width = width;
+            canvas.height = bgCanvas.height = height;
+            drawElements();
+        }
+        window.addEventListener('resize', resizeCanvases);
 
         // --- Logika Menggambar ---
+        function updateSliceAnimation() {
+            if (sliceAnimationOffset < canvas.width * 0.1) {
+                sliceAnimationOffset += 0.5;
+            }
+        }
+
         function drawElements() {
-            canvas.width = canvas.clientWidth;
-            canvas.height = canvas.clientHeight;
+            if (!canvas.width || !canvas.height) { 
+                const container = document.getElementById('container');
+                const { width, height } = container.getBoundingClientRect();
+                canvas.width = bgCanvas.width = width;
+                canvas.height = bgCanvas.height = height;
+            }
+
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
             
-            drawCakeAndCandle();
-
-            if (isEnvelopeVisible) {
-                drawEnvelope();
+            updateAndDrawSparkles();
+            
+            if (isCakeCut) {
+                updateSliceAnimation();
+                drawSplitCake();
+            } else {
+                drawFullCake();
             }
 
-            if (isLetterOpen) {
-                drawLetter();
+            if (!isFlameOn && !isEnvelopeVisible && !isLetterOpen) {
+                updateAndDrawConfetti();
+            }
+
+            if (isEnvelopeVisible) drawEnvelope();
+            if (isLetterOpen) drawLetter();
+
+            if (isCakeCuttable) {
+                drawFingerIndicator();
             }
         }
 
-        function drawCakeAndCandle() {
-            const cakeWidth = 200, cakeHeight = 100, cakeX = canvas.width / 2 - cakeWidth / 2, cakeY = canvas.height - cakeHeight - 40;
-            ctx.fillStyle = "#D2B48C"; ctx.fillRect(cakeX, cakeY, cakeWidth, cakeHeight);
-            ctx.fillStyle = "#FFF8DC"; ctx.fillRect(cakeX, cakeY, cakeWidth, 20);
-            ctx.fillStyle = "#FF69B4";
-            for(let i=0; i<5; i++) { ctx.beginPath(); ctx.arc(cakeX + 25 + i * 40, cakeY + 45, 8, 0, Math.PI * 2); ctx.fill(); }
-            const candleWidth = 15, candleHeight = 50, candleX = canvas.width / 2 - candleWidth / 2, candleY = cakeY - candleHeight;
-            ctx.fillStyle = "#F0EAD6"; ctx.fillRect(candleX, candleY, candleWidth, candleHeight);
-            ctx.fillStyle = "#333"; ctx.fillRect(canvas.width / 2 - 2, candleY - 10, 4, 10); 
+        function getCakeRect() {
+            const cakeWidth = canvas.width * 0.5; 
+            const cakeHeight = cakeWidth * 0.5;
+            const plateHeight = canvas.height * 0.02;
+            const cakeY = canvas.height - cakeHeight - plateHeight;
+            const cakeX = canvas.width / 2 - cakeWidth / 2;
+            const topCakeHeight = cakeHeight * 0.5;
+            const topCakeY = cakeY - topCakeHeight + 1;
+            return { x: cakeX, y: topCakeY, width: cakeWidth, height: cakeHeight + topCakeHeight };
+        }
+
+        function drawFullCake() {
+            const cakeWidth = canvas.width * 0.5; 
+            const cakeHeight = cakeWidth * 0.5;
+            const plateHeight = canvas.height * 0.02;
+
+            const cakeY = canvas.height - cakeHeight - plateHeight;
+            const cakeX = canvas.width / 2 - cakeWidth / 2;
+            
+            ctx.fillStyle = '#FFDDF4';
+            ctx.beginPath();
+            ctx.ellipse(cakeX + cakeWidth / 2, cakeY + cakeHeight, cakeWidth / 2 + (canvas.width * 0.05), plateHeight, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#FFB6C1';
+            ctx.fillRect(cakeX, cakeY, cakeWidth, cakeHeight);
+            
+            const topCakeWidth = cakeWidth * 0.8;
+            const topCakeHeight = cakeHeight * 0.5;
+            const topCakeX = canvas.width / 2 - topCakeWidth / 2;
+            const topCakeY = cakeY - topCakeHeight + 1;
+            ctx.fillStyle = '#FFC0CB';
+            ctx.fillRect(topCakeX, topCakeY, topCakeWidth, topCakeHeight);
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            const dripCount = 10;
+            ctx.moveTo(topCakeX, topCakeY);
+            for(let i=0; i < dripCount; i++) {
+                ctx.quadraticCurveTo(topCakeX + (topCakeWidth / dripCount) * (i + 0.5), topCakeY + (topCakeHeight * 0.3), topCakeX + (topCakeWidth / dripCount) * (i + 1), topCakeY);
+            }
+            ctx.lineTo(topCakeX + topCakeWidth, topCakeY + (topCakeHeight * 0.4));
+            ctx.lineTo(topCakeX, topCakeY + (topCakeHeight * 0.4));
+            ctx.closePath();
+            ctx.fill();
+
+            const colors = ['#FF69B4', '#87CEEB', '#98FB98', '#FFD700', '#DDA0DD'];
+            for(let i=0; i<30; i++) {
+                ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
+                ctx.fillRect(topCakeX + (topCakeWidth * 0.1) + Math.random() * (topCakeWidth * 0.8), topCakeY + Math.random() * (topCakeHeight * 0.2), canvas.width * 0.007, canvas.width * 0.012);
+            }
+
+            const candleHeight = canvas.height * 0.12; 
+            const candleWidth = candleHeight * 0.25;
+            const candleX = canvas.width / 2 - candleWidth / 2;
+            const candleY = topCakeY - candleHeight;
+            
             if (isFlameOn) {
-                updateAndDrawFlame(canvas.width / 2, candleY - 10);
-            } else if (!isEnvelopeVisible && !isLetterOpen) {
-                updateAndDrawSmoke();
+                const goldGradient = ctx.createLinearGradient(candleX, 0, candleX + candleWidth, 0);
+                goldGradient.addColorStop(0, '#FFD700');
+                goldGradient.addColorStop(0.5, '#FFFACD');
+                goldGradient.addColorStop(1, '#FFDF00');
+                ctx.fillStyle = goldGradient;
+                ctx.fillRect(candleX, candleY, candleWidth, candleHeight);
+                
+                const wickHeight = candleHeight * 0.15;
+                ctx.fillStyle = "#333";
+                ctx.fillRect(canvas.width / 2 - (candleWidth * 0.1), candleY - wickHeight, candleWidth * 0.2, wickHeight); 
+                updateAndDrawFlame(canvas.width / 2, candleY - wickHeight);
             }
         }
 
+        function drawSplitCake() {
+            // --- BAGIAN KIRI ---
+            ctx.save();
+            ctx.translate(-sliceAnimationOffset, 0);
+            
+            const leftClip = new Path2D();
+            leftClip.moveTo(finalSlicePath[0].x, 0);
+            finalSlicePath.forEach(p => leftClip.lineTo(p.x, p.y));
+            leftClip.lineTo(finalSlicePath[finalSlicePath.length - 1].x, canvas.height);
+            leftClip.lineTo(0, canvas.height);
+            leftClip.lineTo(0, 0);
+            leftClip.closePath();
+            ctx.clip(leftClip);
+
+            drawFullCake();
+            ctx.restore();
+
+            // --- BAGIAN KANAN ---
+            ctx.save();
+            ctx.translate(sliceAnimationOffset, 0);
+
+            const rightClip = new Path2D();
+            rightClip.moveTo(finalSlicePath[0].x, 0);
+            finalSlicePath.forEach(p => rightClip.lineTo(p.x, p.y));
+            rightClip.lineTo(finalSlicePath[finalSlicePath.length - 1].x, canvas.height);
+            rightClip.lineTo(canvas.width, canvas.height);
+            rightClip.lineTo(canvas.width, 0);
+            rightClip.closePath();
+            ctx.clip(rightClip);
+
+            drawFullCake();
+            ctx.restore();
+        }
+        
         function drawEnvelope() {
-            const width = 200;
-            const height = 120;
+            const width = canvas.width * 0.6;
+            const height = width * 0.6;
             const x = canvas.width / 2 - width / 2;
             const y = canvas.height / 2 - height / 2;
             envelopeRect = { x, y, width, height };
 
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-
             ctx.fillStyle = "#FFC0CB";
             ctx.fillRect(x, y, width, height);
             ctx.beginPath();
             ctx.moveTo(x, y);
             ctx.lineTo(x + width / 2, y + height / 2);
             ctx.lineTo(x + width, y);
+            ctx.closePath();
             ctx.strokeStyle = "#FF69B4";
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             ctx.stroke();
         }
 
         function drawLetter() {
-            const width = 320;
-            const height = 450;
+            const width = canvas.width * 0.85;
+            const height = canvas.height * 0.8;
             const x = canvas.width / 2 - width / 2;
             const y = canvas.height / 2 - height / 2;
-
+            
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = "#FFFACD";
+            ctx.fillStyle = "#FFF8DC";
             ctx.strokeStyle = "#FFD700";
             ctx.lineWidth = 4;
+            ctx.shadowColor = '#FFD700';
+            ctx.shadowBlur = 15;
             ctx.strokeRect(x, y, width, height);
             ctx.fillRect(x, y, width, height);
+            ctx.shadowBlur = 0;
             
-            // ✅ REVISI: Panggil fungsi untuk menggambar hati
-            drawHearts(x, y, width, height);
-
             ctx.save();
             ctx.scale(-1, 1);
-
             ctx.fillStyle = "#C71585";
-            // ✅ REVISI: Menggunakan font yang lebih menarik
-            ctx.font = "bold 40px 'Brush Script MT', cursive";
+            ctx.font = `bold ${canvas.width * 0.12}px 'Dancing Script', cursive`;
             ctx.textAlign = "center";
-            ctx.fillText("Selamat Ulang Tahun!", -canvas.width / 2, y + 80);
+            
+            ctx.fillText("Selamat", -canvas.width / 2, y + height * 0.18);
+            ctx.fillText("Ulang Tahun!", -canvas.width / 2, y + height * 0.30);
 
             ctx.fillStyle = "#2F4F4F";
-            ctx.font = "24px 'Brush Script MT', cursive";
+            ctx.font = `${canvas.width * 0.06}px 'Dancing Script', cursive`;
             const message = "Semoga panjang umur, sehat selalu, dan semua harapanmu tercapai. Teruslah menjadi pribadi yang luar biasa!";
             const lines = [];
             let currentLine = '';
-            // ✅ REVISI: Penyesuaian lebar teks agar pas
-            const maxWidth = width - 80; 
             message.split(' ').forEach(word => {
-                if (ctx.measureText(currentLine + word).width > maxWidth) {
+                if (ctx.measureText(currentLine + word).width > width * 0.8) {
                     lines.push(currentLine);
                     currentLine = word + ' ';
                 } else {
@@ -269,86 +463,157 @@
                 }
             });
             lines.push(currentLine);
-
             lines.forEach((line, index) => {
-                // ✅ REVISI: Penyesuaian posisi teks agar lebih di tengah
-                ctx.fillText(line.trim(), -canvas.width / 2, y + 160 + (index * 35));
+                ctx.fillText(line.trim(), -canvas.width / 2, y + height * 0.45 + (index * (canvas.width * 0.08)));
             });
-
             ctx.restore();
         }
 
-        // --- Fungsi Baru untuk Efek Hati ---
-        function drawHearts(letterX, letterY, letterWidth, letterHeight) {
-            if (heartParticles.length < 30) {
-                heartParticles.push({
-                    x: letterX + Math.random() * letterWidth,
-                    y: letterY,
-                    size: Math.random() * 10 + 5,
-                    speed: Math.random() * 1 + 0.5,
-                    alpha: 1
+        function drawFingerIndicator() {
+            if (!fingerPosition) return;
+            ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+            ctx.beginPath();
+            ctx.arc(fingerPosition.x, fingerPosition.y, 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255, 105, 180, 0.9)";
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        }
+
+        function updateAndDrawSparkles() {
+            if (sparkleParticles.length < 50) {
+                sparkleParticles.push({
+                    x: Math.random() * bgCanvas.width, y: Math.random() * bgCanvas.height, size: Math.random() * 2 + 1, alpha: Math.random() * 0.5 + 0.2, decay: Math.random() * 0.01 + 0.005
                 });
             }
+            for (let i = sparkleParticles.length - 1; i >= 0; i--) {
+                let p = sparkleParticles[i];
+                p.alpha -= p.decay;
+                if (p.alpha <= 0) {
+                    sparkleParticles[i] = { x: Math.random() * bgCanvas.width, y: bgCanvas.height, size: Math.random() * 2 + 1, alpha: Math.random() * 0.5 + 0.5, decay: Math.random() * 0.01 + 0.005 };
+                }
+                bgCtx.fillStyle = `rgba(255, 255, 255, ${p.alpha})`;
+                bgCtx.beginPath();
+                bgCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                bgCtx.fill();
+            }
+        }
+        
+        function updateAndDrawFlame(x, y) {
+            const windStrength = isBlowing ? (canvas.width * 0.005) : 0;
+            const flickerIntensity = isBlowing ? 1.5 : 1;
+            if (flameParticles.length < 150) {
+                for (let i = 0; i < 5; i++) {
+                    let particleType;
+                    const rand = Math.random();
+                    if (rand < 0.1) particleType = 'core'; 
+                    else if (rand < 0.2) particleType = 'spark';
+                    else particleType = 'flame';
 
-            for (let i = heartParticles.length - 1; i >= 0; i--) {
-                let p = heartParticles[i];
-                p.y += p.speed;
-                p.alpha -= 0.01;
+                    flameParticles.push({
+                        x, y,
+                        vx: ((Math.random() - 0.5) * 0.6 * flickerIntensity) + windStrength - ((x - (canvas.width / 2)) * 0.01),
+                        vy: -Math.random() * (canvas.height * 0.0025) * flickerIntensity - 1,
+                        radiusX: (Math.random() * (canvas.width * 0.015) + (canvas.width * 0.01)) / (isBlowing ? 1.5 : 1),
+                        radiusY: (Math.random() * (canvas.width * 0.03) + (canvas.width * 0.02)) / (isBlowing ? 1.5 : 1),
+                        alpha: 1,
+                        type: particleType
+                    });
+                }
+            }
 
-                if (p.alpha <= 0 || p.y > letterY + letterHeight) {
-                    heartParticles.splice(i, 1);
+            for (let i = flameParticles.length - 1; i >= 0; i--) {
+                let p = flameParticles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.radiusX *= 0.95;
+                p.radiusY *= 0.95;
+                p.alpha -= 0.04;
+
+                if (p.alpha <= 0 || p.radiusX <= 0) {
+                    flameParticles.splice(i, 1);
                 } else {
-                    ctx.fillStyle = `rgba(255, 105, 180, ${p.alpha})`; // Warna pink
                     ctx.beginPath();
-                    ctx.moveTo(p.x, p.y + p.size / 4);
-                    ctx.bezierCurveTo(p.x, p.y, p.x - p.size / 2, p.y, p.x - p.size / 2, p.y + p.size / 4);
-                    ctx.bezierCurveTo(p.x - p.size / 2, p.y + p.size / 2, p.x, p.y + p.size, p.x, p.y + p.size);
-                    ctx.bezierCurveTo(p.x, p.y + p.size, p.x + p.size / 2, p.y + p.size / 2, p.x + p.size / 2, p.y + p.size / 4);
-                    ctx.bezierCurveTo(p.x + p.size / 2, p.y, p.x, p.y, p.x, p.y + p.size / 4);
+                    ctx.ellipse(p.x, p.y, p.radiusX, p.radiusY, 0, 0, Math.PI * 2);
+                    
+                    let color;
+                    if (p.type === 'core') {
+                        color = `rgba(173, 216, 230, ${p.alpha * 0.8})`; 
+                    } else if (p.type === 'spark') {
+                        color = `rgba(255, 215, 0, ${p.alpha})`;
+                    } else {
+                        color = `rgba(255, ${Math.random() * 150 + 50}, 0, ${p.alpha})`;
+                    }
+                    ctx.fillStyle = color;
                     ctx.fill();
                 }
             }
         }
-
-        function updateAndDrawFlame(x, y) {
-            const windStrength = isBlowing ? 2.0 : 0;
-            const flickerIntensity = isBlowing ? 1.5 : 1;
-            if (flameParticles.length < 100) {
-                for (let i = 0; i < 5; i++) {
-                    flameParticles.push({ x, y, vx: ((Math.random() - 0.5) * 0.5 * flickerIntensity) + windStrength, vy: -Math.random() * 1.5 * flickerIntensity - 1, size: (Math.random() * 15 + 10) / (isBlowing ? 1.5 : 1), alpha: 1 });
-                }
-            }
-            for (let i = flameParticles.length - 1; i >= 0; i--) {
-                let p = flameParticles[i]; p.x += p.vx; p.y += p.vy; p.size *= 0.95; p.alpha -= 0.04;
-                if (p.alpha <= 0) flameParticles.splice(i, 1);
-                else { ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fillStyle = `rgba(255, ${Math.random() * 150 + 50}, 0, ${p.alpha})`; ctx.fill(); }
-            }
-        }
         
-        function createSmoke() {
-            smokeParticles = []; const x = canvas.width / 2, y = canvas.height - 100 - 40 - 50 - 10;
-            for (let i = 0; i < 30; i++) smokeParticles.push({ x, y, vx: (Math.random() - 0.5) * 0.3, vy: -Math.random() * 1 - 0.5, size: Math.random() * 10 + 5, alpha: 0.5 });
+        function createConfetti(x, y) {
+            confettiParticles = []; 
+            const colors = ['#FF69B4', '#87CEEB', '#98FB98', '#FFD700', '#DDA0DD', '#FFFFFF'];
+            for (let i = 0; i < 150; i++) {
+                confettiParticles.push({ 
+                    x, y, 
+                    vx: (Math.random() - 0.5) * (canvas.width * 0.02), 
+                    vy: -Math.random() * (canvas.height * 0.015) - 5,
+                    width: Math.random() * (canvas.width * 0.02) + 5,
+                    height: Math.random() * (canvas.width * 0.03) + 5,
+                    alpha: 1, 
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    angle: Math.random() * Math.PI * 2,
+                    spin: (Math.random() - 0.5) * 0.2
+                });
+            }
         }
 
-        function updateAndDrawSmoke() {
-             for (let i = smokeParticles.length - 1; i >= 0; i--) {
-                let p = smokeParticles[i]; p.x += p.vx; p.y += p.vy; p.alpha -= 0.01;
-                if (p.alpha <= 0) smokeParticles.splice(i, 1);
-                else { ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fillStyle = `rgba(150, 150, 150, ${p.alpha})`; ctx.fill(); }
+        function updateAndDrawConfetti() {
+             for (let i = confettiParticles.length - 1; i >= 0; i--) {
+                let p = confettiParticles[i];
+                p.vx *= 0.99;
+                p.x += p.vx;
+                p.vy += 0.2; 
+                p.y += p.vy;
+                p.alpha -= 0.01;
+                p.angle += p.spin;
+
+                if (p.alpha <= 0) confettiParticles.splice(i, 1);
+                else {
+                    ctx.save();
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.angle);
+                    ctx.fillStyle = p.color;
+                    ctx.globalAlpha = p.alpha;
+                    ctx.fillRect(-p.width / 2, -p.height / 2, p.width, p.height);
+                    ctx.restore();
+                }
             }
         }
         
         canvas.addEventListener("click", (event) => {
             const rect = canvas.getBoundingClientRect();
-            const clickX = canvas.width - (event.clientX - rect.left);
-            const clickY = event.clientY - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clickX = canvas.width - (event.clientX - rect.left) * scaleX;
+            const clickY = (event.clientY - rect.top) * scaleY;
+
+            if (isCakeCut) { 
+                isFlameOn = true;
+                isCakeCut = false;
+                finalSlicePath = [];
+                sliceAnimationOffset = 0;
+                isCakeCuttable = false;
+                slicePath = [];
+                statusText.textContent = "Tiup lagi untuk memadamkannya!";
+                return;
+            }
 
             if (isLetterOpen) {
                 isLetterOpen = false;
-                isFlameOn = true;
-                flameParticles = [];
-                heartParticles = []; // Hapus sisa hati saat surat ditutup
-                statusText.textContent = "Tiup lagi untuk memadamkannya!";
+                isCakeCuttable = true;
+                slicePath = [];
+                statusText.textContent = "Sekarang, potong kuenya dengan jarimu!";
                 return;
             }
 
@@ -361,6 +626,8 @@
                 }
             }
         });
+        
+        resizeCanvases();
     </script>
 </body>
 </html>
